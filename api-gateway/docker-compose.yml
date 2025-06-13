@@ -1,0 +1,255 @@
+version: "3.8"
+
+services:
+  ## Mongo Docker Compose Config
+  mongo:
+    container_name: mongo
+    image: mongo:4.4.14-rc0-focal
+    restart: always
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - ./databases/mongo-data:/data/db
+    profiles:
+      - infrastructure
+
+  postgres-order:
+    container_name: postgres-order
+    image: postgres
+    environment:
+      POSTGRES_DB: order_service
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      PGDATA: /data/postgres
+    volumes:
+      - ./databases/postgres-order:/data/postgres
+    expose:
+      - "5431"
+    ports:
+      - "5431:5431"
+    command: -p 5431
+    restart: always
+    profiles:
+      - infrastructure
+
+  postgres-stock-check:
+    container_name: postgres-stock-check
+    image: postgres
+    environment:
+      POSTGRES_DB: stock_check_service
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      PGDATA: /data/postgres
+    volumes:
+      - ./databases/postgres-stock-check:/data/postgres
+    ports:
+      - "5432:5432"
+    restart: always
+    profiles:
+      - infrastructure
+
+  postgres-author:
+    container_name: postgres-author
+    image: postgres
+    environment:
+      POSTGRES_DB: author_service
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      PGDATA: /data/postgres
+    volumes:
+      - ./databases/postgres-author:/data/postgres
+    expose:
+      - "5433"
+    ports:
+      - "5433:5433"
+    command: -p 5433
+    restart: always
+    profiles:
+      - infrastructure
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.1
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    profiles:
+      - infrastructure
+
+  broker:
+    image: confluentinc/cp-kafka:7.0.1
+    container_name: broker
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    profiles:
+      - infrastructure
+
+  ## Zipkin
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    profiles:
+      - infrastructure
+
+  ## Eureka Server
+  discovery-server:
+    build:
+      context: ./discovery-server
+    image: microservices-bookstore/discovery-server:latest
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    profiles:
+      - discovery-config
+
+  ## Config Server
+  config-server:
+    build:
+      context: ./config-server
+    image: microservices-bookstore/config-server:latest
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    environment:
+      - SPRING_PROFILES_ACTIVE=native
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-server:8761/eureka
+    depends_on:
+      - discovery-server
+    profiles:
+      - discovery-config
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./api-gateway/Dockerfile
+    image: microservices-bookstore/api-gateway:latest
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    expose:
+      - "8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
+    profiles:
+      - services
+
+  book-service:
+    build:
+      context: ./book-service
+    image: microservices-bookstore/book-service:latest
+    container_name: book-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - api-gateway
+    profiles:
+      - services
+
+  author-service:
+    build:
+      context: ./author-service
+    image: microservices-bookstore/author-service:latest
+    container_name: author-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - api-gateway
+    profiles:
+      - services
+
+  order-service:
+    build:
+      context: ./order-service
+    image: microservices-bookstore/order-service:latest
+    container_name: order-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - api-gateway
+    profiles:
+      - services
+
+  stock-check-service:
+    build:
+      context: ./stock-check-service
+    image: microservices-bookstore/stock-check-service:latest
+    container_name: stock-check-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - api-gateway
+    profiles:
+      - services
+
+  message-service:
+    build:
+      context: ./message-service
+    image: microservices-bookstore/message-service:latest
+    container_name: message-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - api-gateway
+    profiles:
+      - services
+
+  prometheus:
+    image: prom/prometheus:v2.37.1
+    container_name: prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - book-service
+      - stock-check-service
+      - order-service
+      - message-service
+    profiles:
+      - services
+
+  grafana:
+    image: grafana/grafana-oss:8.5.2
+    container_name: grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    links:
+      - prometheus:prometheus
+    volumes:
+      - ./grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=password
+    profiles:
+      - services
+
+  nextjs-frontend:
+    container_name: nextjs-frontend
+    image: microservices-bookstore/nextjs-frontend:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    profiles:
+      - services

@@ -1,0 +1,20 @@
+# Stage 1: Build the full project and package only api-gateway
+FROM maven:3.9.6-eclipse-temurin-17 AS build
+
+WORKDIR /app
+
+COPY . .
+
+# Build api-gateway and its dependencies
+RUN mvn clean package -DskipTests -pl api-gateway -am
+
+# Stage 2: Create the lightweight runtime image
+FROM eclipse-temurin:17-jdk-alpine
+
+WORKDIR /app
+
+COPY --from=build /app/api-gateway/target/api-gateway-*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
