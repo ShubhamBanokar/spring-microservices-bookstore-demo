@@ -151,7 +151,7 @@ services:
       - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
     profiles:
       - services
-book-service:
+  book-service:
     build:
       context: ./book-service
     image: microservices-bookstore/book-service:latest
